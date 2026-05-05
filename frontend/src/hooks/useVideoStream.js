@@ -13,6 +13,15 @@ export default function useVideoStream(heightCm) {
   const intervalRef = useRef(null)
   const retryCountRef = useRef(0)
   const retryTimeoutRef = useRef(null)
+  const heightCmRef = useRef(heightCm || 170)
+  const streamRef = useRef(null)   // keep stream reference so we can attach it after video mounts
+
+  useEffect(() => {
+    heightCmRef.current = heightCm || 170
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'config', height_cm: heightCmRef.current }))
+    }
+  }, [heightCm])
 
   const stopCapture = useCallback(() => {
     if (intervalRef.current) {
@@ -27,10 +36,18 @@ export default function useVideoStream(heightCm) {
       const video = videoRef.current
       const canvas = canvasRef.current
       const ws = wsRef.current
-      if (!video || !canvas || !ws || ws.readyState !== WebSocket.OPEN) return
 
-      canvas.width = video.videoWidth || 640
-      canvas.height = video.videoHeight || 480
+      // Attach stream to video element if the stream arrived before video mounted
+      if (video && streamRef.current && !video.srcObject) {
+        video.srcObject = streamRef.current
+        video.play().catch(() => {})
+      }
+
+      if (!video || !canvas || !ws || ws.readyState !== WebSocket.OPEN) return
+      if (!video.videoWidth || !video.videoHeight) return  // not ready yet
+
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
       const ctx = canvas.getContext('2d')
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
@@ -41,13 +58,14 @@ export default function useVideoStream(heightCm) {
             wsRef.current.send(buf)
           }
         })
-      }, 'image/jpeg', 0.7)
+      }, 'image/jpeg', 0.75)
     }, 100) // 10 fps
   }, [stopCapture])
 
   const connect = useCallback(() => {
     if (wsRef.current) {
       wsRef.current.close()
+      wsRef.current = null
     }
 
     const ws = new WebSocket('ws://localhost:8000/ws/video')
@@ -57,7 +75,7 @@ export default function useVideoStream(heightCm) {
       setConnected(true)
       setError(null)
       retryCountRef.current = 0
-      ws.send(JSON.stringify({ type: 'config', height_cm: heightCm || 170 }))
+      ws.send(JSON.stringify({ type: 'config', height_cm: heightCmRef.current || 170 }))
       startCapture()
     }
 
@@ -69,6 +87,7 @@ export default function useVideoStream(heightCm) {
         }
         if (data.measurements) setMeasurements(data.measurements)
         if (data.posture_alerts) setAlerts(data.posture_alerts)
+        if (data.error) console.warn('Backend error:', data.error)
       } catch {
         // ignore parse errors
       }
@@ -90,30 +109,41 @@ export default function useVideoStream(heightCm) {
     ws.onerror = () => {
       setError('WebSocket connection error')
     }
-  }, [heightCm, startCapture, stopCapture])
+  }, [startCapture, stopCapture])
 
   useEffect(() => {
-    // Start webcam
+    // Only activate when heightCm is provided — step 1 passes null to stay idle
+    if (heightCm == null) return
+
     navigator.mediaDevices
-      .getUserMedia({ video: true })
+      .getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } })
       .then(stream => {
+        streamRef.current = stream
+        // Attach immediately if video element is already mounted
         if (videoRef.current) {
           videoRef.current.srcObject = stream
-          videoRef.current.play()
+          videoRef.current.play().catch(() => {})
         }
         connect()
       })
-      .catch(() => setError('Camera access denied'))
+      .catch(err => {
+        console.error('Camera error:', err)
+        setError('Camera access denied — please allow camera permissions')
+      })
 
     return () => {
       stopCapture()
       clearTimeout(retryTimeoutRef.current)
-      if (wsRef.current) wsRef.current.close()
-      if (videoRef.current?.srcObject) {
-        videoRef.current.srcObject.getTracks().forEach(t => t.stop())
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop())
+        streamRef.current = null
       }
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [heightCm != null]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return { frameDataUrl, measurements, alerts, connected, error, videoRef, canvasRef }
 }

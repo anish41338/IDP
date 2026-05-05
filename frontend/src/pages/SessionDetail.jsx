@@ -22,12 +22,12 @@ const page = {
 
 function StatCard({ label, value, sub, valueClass = '' }) {
   return (
-    <div className="card p-4 text-center">
+    <div className="card p-4 text-center hover:-translate-y-0.5 transition-transform duration-200">
       <div className={`text-xl font-bold tabular-nums text-slate-800 dark:text-slate-100 ${valueClass}`}>
         {value}
       </div>
-      <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">{label}</div>
-      {sub && <div className="text-[10px] text-slate-400 mt-0.5">{sub}</div>}
+      <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-0.5">{label}</div>
+      {sub && <div className="text-[10px] text-slate-400 mt-0.5 capitalize">{sub}</div>}
     </div>
   )
 }
@@ -75,6 +75,8 @@ export default function SessionDetail() {
   const m = session.measurements || {}
   const sym = m.symmetry_score
   const angle = m.posture_angle_deg
+  const reba = m.reba
+  const rula = m.rula
 
   const symColor = sym >= 95
     ? 'text-emerald-600 dark:text-emerald-400'
@@ -85,15 +87,30 @@ export default function SessionDetail() {
   const symLabel = sym >= 95 ? 'Excellent' : sym >= 85 ? 'Good' : 'Needs Attention'
   const angleLabel = angle == null ? '' : Math.abs(angle) <= 2 ? 'Neutral' : Math.abs(angle) <= 5 ? 'Mild tilt' : 'Significant tilt'
 
+  const rebaScore = reba?.final_score
+  const rebaRisk = reba?.risk_level
+  const rebaColor = !rebaScore ? '' : rebaScore <= 3
+    ? 'text-emerald-600 dark:text-emerald-400'
+    : rebaScore <= 7
+    ? 'text-amber-600 dark:text-amber-400'
+    : 'text-red-600 dark:text-red-400'
+
+  const rulaAction = rula?.action_level
+  const rulaColor = !rulaAction ? '' : rulaAction <= 1
+    ? 'text-emerald-600 dark:text-emerald-400'
+    : rulaAction <= 2
+    ? 'text-amber-600 dark:text-amber-400'
+    : 'text-red-600 dark:text-red-400'
+
   return (
     <motion.div initial="initial" animate="in" exit="out" variants={page}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
             Session #{session.id}
           </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             {patient.name} ·{' '}
             {new Date(session.session_date).toLocaleDateString('en-US', {
               weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -127,7 +144,7 @@ export default function SessionDetail() {
       </div>
 
       {/* Summary stat bar */}
-      <div className="grid grid-cols-4 gap-3 mb-5">
+      <div className="grid grid-cols-4 gap-3 mb-3">
         <StatCard
           label="Symmetry Score"
           value={sym != null ? `${sym}%` : '—'}
@@ -149,6 +166,109 @@ export default function SessionDetail() {
           sub={session.posture_alerts?.length > 0 ? 'Review recommended' : 'None detected'}
         />
       </div>
+
+      {/* REBA / RULA stat bar */}
+      {(reba || rula) && (
+        <div className="grid grid-cols-4 gap-3 mb-5">
+          <StatCard
+            label="REBA Score"
+            value={rebaScore ?? '—'}
+            sub={rebaRisk ? rebaRisk.replace('_', ' ') : undefined}
+            valueClass={rebaColor}
+          />
+          <StatCard
+            label="REBA Table A"
+            value={reba?.score_a ?? '—'}
+            sub="Trunk · Neck · Legs"
+          />
+          <StatCard
+            label="REBA Table B"
+            value={reba?.score_b ?? '—'}
+            sub="Arms · Wrist"
+          />
+          <StatCard
+            label="RULA Action Level"
+            value={rulaAction ? `Level ${rulaAction}` : '—'}
+            sub={rula?.action_description?.split(' — ')[0]}
+            valueClass={rulaColor}
+          />
+        </div>
+      )}
+
+      {/* Temporal + LSI panel */}
+      {(() => {
+        const temporal = m.temporal
+        const lsiKeys = ['lsi_arm', 'lsi_upper_arm', 'lsi_forearm', 'lsi_thigh', 'lsi_shank']
+        const hasLsi = lsiKeys.some(k => m[k] != null)
+        if (!temporal && !hasLsi) return null
+
+        const fatigue = temporal?.fatigue_index
+        const sway = temporal?.postural_sway_index
+        const symTrend = temporal?.symmetry_trend
+        const trendIcon = symTrend === 'improving' ? '↑' : symTrend === 'worsening' ? '↓' : '→'
+        const trendColor = symTrend === 'improving' ? 'text-emerald-600 dark:text-emerald-400'
+          : symTrend === 'worsening' ? 'text-red-600 dark:text-red-400'
+          : 'text-slate-500'
+        const fatigueColor = fatigue == null ? 'text-slate-400'
+          : fatigue >= 0.6 ? 'text-red-600 dark:text-red-400'
+          : fatigue >= 0.3 ? 'text-amber-600 dark:text-amber-400'
+          : 'text-emerald-600 dark:text-emerald-400'
+
+        return (
+          <div className="card p-5 mb-5">
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+              <Activity size={14} className="text-slate-400" />
+              Temporal & Symmetry Analysis
+            </h3>
+
+            {temporal && (
+              <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 text-center">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Fatigue Index</div>
+                  <div className={`text-lg font-bold tabular-nums ${fatigueColor}`}>{fatigue != null ? fatigue.toFixed(2) : '—'}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 text-center">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Sway Index</div>
+                  <div className="text-lg font-bold tabular-nums text-slate-700 dark:text-slate-200">{sway != null ? sway.toFixed(4) : '—'}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 text-center">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Symmetry Trend</div>
+                  <div className={`text-lg font-bold ${trendColor}`}>{symTrend ? `${trendIcon} ${symTrend}` : '—'}</div>
+                </div>
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 text-center">
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Depth Confidence</div>
+                  <div className="text-lg font-bold tabular-nums text-slate-700 dark:text-slate-200">
+                    {m.depth_confidence != null ? `${(m.depth_confidence * 100).toFixed(0)}%` : '—'}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {hasLsi && (
+              <div>
+                <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-2">Bilateral Lateral Symmetry Index (LSI)</div>
+                <div className="grid grid-cols-5 gap-2">
+                  {lsiKeys.map(k => {
+                    const v = m[k]
+                    if (v == null) return null
+                    const high = v > 10
+                    return (
+                      <div key={k} className={`p-3 rounded-lg border text-center ${
+                        high ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'
+                        : 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700'
+                      }`}>
+                        <div className="text-[9px] text-slate-400 mb-1 uppercase">{k.replace('lsi_','').replace('_',' ')}</div>
+                        <div className={`text-base font-bold ${high ? 'text-amber-700 dark:text-amber-300' : 'text-slate-700 dark:text-slate-200'}`}>{v}%</div>
+                        {high && <div className="text-[9px] text-amber-500 mt-0.5">{'>'} 10% threshold</div>}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Grid: measurements + gauge */}
       <div className="grid grid-cols-2 gap-5 mb-5">
@@ -200,7 +320,7 @@ export default function SessionDetail() {
 
       {/* Reports */}
       <div className="card p-5">
-        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4">
+        <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-4">
           Clinical Reports
         </h3>
         <ReportViewer sessionId={Number(id)} previousSessionId={previousSession?.id} />

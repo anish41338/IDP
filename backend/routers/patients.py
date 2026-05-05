@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DBSession
 from typing import List, Optional
+from datetime import datetime
 from pydantic import BaseModel
 from database.db import get_db
 from database.models import Patient, MeasurementSession
@@ -34,7 +35,7 @@ class PatientResponse(BaseModel):
     height_cm: Optional[float]
     weight_kg: Optional[float]
     notes: Optional[str]
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 

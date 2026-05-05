@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Activity, ArrowLeft, AlertTriangle, CheckCircle2, Wifi, WifiOff, Clock, Bell } from 'lucide-react'
+import { Activity, ArrowLeft, AlertTriangle, CheckCircle2, Wifi, WifiOff, Bell, Save } from 'lucide-react'
 import { getPatient } from '../api/patients'
+import { createSession } from '../api/sessions'
 import { mockApi } from '../lib/mockData'
 import { useAppContext } from '../context/AppContext'
 import useVideoStream from '../hooks/useVideoStream'
@@ -165,12 +166,17 @@ export default function LiveMonitor() {
   const [alertCount, setAlertCount] = useState(0)
   const [currentMeasurements, setCurrentMeasurements] = useState(null)
   const [hasAlert, setHasAlert] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
   const duration = useDuration()
   const logEndRef = useRef(null)
+  const logContainerRef = useRef(null)
+  // Accumulate all alerts seen during this session for saving
+  const allAlertsRef = useRef([])
 
-  // Real-mode WebSocket
-  const { frameDataUrl, measurements, alerts, connected } =
-    useVideoStream(!demoMode ? 170 : null)
+  // Real-mode WebSocket — patient.height_cm used for scale calibration
+  const { frameDataUrl, measurements, alerts, connected, videoRef, canvasRef } =
+    useVideoStream(!demoMode ? (patient?.height_cm ?? 170) : null)
 
   // Load patient
   useEffect(() => {
@@ -181,9 +187,10 @@ export default function LiveMonitor() {
       .finally(() => setLoading(false))
   }, [patientId, demoMode])
 
-  // Scroll log to bottom
+  // Scroll log container to bottom (not the page)
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = logContainerRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [alertLog])
 
   // ── Demo mode: inject startup message + periodic alerts ──────────────────────
@@ -239,6 +246,7 @@ export default function LiveMonitor() {
     if (alerts?.length > 0) {
       setHasAlert(true)
       alerts.forEach(msg => {
+        allAlertsRef.current = [...new Set([...allAlertsRef.current, msg])]
         setAlertCount(c => c + 1)
         setAlertLog(prev => [...prev, { type: 'alert', message: msg, time: fmt(new Date()) }])
       })
@@ -251,6 +259,23 @@ export default function LiveMonitor() {
       }])
     }
   }, [measurements, alerts, demoMode])
+
+  const handleSaveSession = async () => {
+    const m = currentMeasurements
+    if (!m) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const session = await (demoMode
+        ? mockApi.createSession({ patient_id: Number(patientId), measurements: m, posture_alerts: allAlertsRef.current })
+        : createSession({ patient_id: Number(patientId), measurements: m, posture_alerts: allAlertsRef.current })
+      )
+      navigate(`/sessions/${session.id}`)
+    } catch {
+      setSaveError('Failed to save session')
+      setSaving(false)
+    }
+  }
 
   if (loading) return <LoadingSpinner size="lg" label="Starting monitor..." />
 
@@ -283,17 +308,15 @@ export default function LiveMonitor() {
             {patient?.name ?? 'Patient'}
           </h1>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Duration */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-full text-xs font-mono text-slate-600 dark:text-slate-300">
-            <Clock size={11} /> {duration}
-          </div>
-          {/* Alert count */}
-          {alertCount > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 dark:bg-amber-950/40 rounded-full text-xs font-semibold text-amber-700 dark:text-amber-300">
-              <Bell size={11} /> {alertCount} alert{alertCount !== 1 ? 's' : ''}
-            </div>
-          )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSaveSession}
+            disabled={!currentMeasurements || saving}
+            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            title={!currentMeasurements ? 'Waiting for measurements...' : 'Save current snapshot as a session'}
+          >
+            <Save size={14} /> {saving ? 'Saving...' : 'Save Session'}
+          </button>
           <button onClick={() => navigate(`/patients/${patientId}`)} className="btn-ghost">
             <ArrowLeft size={14} /> Back
           </button>
@@ -301,17 +324,29 @@ export default function LiveMonitor() {
       </div>
 
       {/* Status bar */}
-      <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border mb-5 transition-colors duration-500 ${statusColor}`}>
-        {statusIcon}
-        <span className={`text-sm font-bold tracking-wide ${hasAlert ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
-          {statusText}
-        </span>
-        {hasAlert && (
-          <span className="text-xs text-amber-600 dark:text-amber-400 ml-1">
-            — postural deviation detected, please correct your position
+      <div className={`flex items-center justify-between px-4 py-2.5 rounded-xl border mb-5 transition-colors duration-500 ${statusColor}`}>
+        <div className="flex items-center gap-2">
+          {statusIcon}
+          <span className={`text-sm font-bold tracking-wide ${hasAlert ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}`}>
+            {statusText}
           </span>
-        )}
+          {hasAlert && (
+            <span className="text-xs text-amber-600 dark:text-amber-400 ml-1">
+              — postural deviation detected, please correct your position
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 text-xs opacity-60">
+          <span className="font-mono">{duration}</span>
+          {alertCount > 0 && <span>{alertCount} event{alertCount !== 1 ? 's' : ''}</span>}
+        </div>
       </div>
+
+      {saveError && (
+        <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl text-sm flex items-center gap-2">
+          <AlertTriangle size={13} className="shrink-0" /> {saveError}
+        </div>
+      )}
 
       {/* Main grid: feed + measurements */}
       <div className="grid grid-cols-2 gap-5 mb-5">
@@ -348,21 +383,56 @@ export default function LiveMonitor() {
           </h3>
           {currentMeasurements ? (
             <div className="grid grid-cols-2 gap-2 flex-1">
-              {Object.entries(currentMeasurements).map(([key, value]) => {
-                const isPostureKey = key === 'posture_angle_deg'
-                const isSymKey = key === 'symmetry_score'
-                let cardClass = 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
-                if (isPostureKey && Math.abs(value) > 5) cardClass = 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'
-                if (isSymKey && value < 90) cardClass = 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'
-                const label = key.replace(/_cm$/, '').replace(/_deg$/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-                const unit = key.endsWith('_cm') ? ' cm' : key.endsWith('_deg') ? '°' : key === 'symmetry_score' ? '%' : ''
+              {/* REBA score card */}
+              {currentMeasurements.reba && (() => {
+                const score = currentMeasurements.reba.final_score
+                const risk = currentMeasurements.reba.risk_level
+                const cls = score >= 8
+                  ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                  : score >= 4
+                  ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'
+                  : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
                 return (
-                  <div key={key} className={`p-2.5 rounded-lg border text-center transition-colors duration-300 ${cardClass}`}>
-                    <div className="text-[10px] font-medium opacity-60 uppercase tracking-wide mb-1">{label}</div>
-                    <div className="text-sm font-bold tabular-nums">{value}{unit}</div>
+                  <div className={`p-2.5 rounded-lg border text-center transition-colors duration-300 ${cls}`}>
+                    <div className="text-[10px] font-medium opacity-60 uppercase tracking-wide mb-1">REBA Score</div>
+                    <div className="text-sm font-bold tabular-nums">{score} <span className="text-[10px] font-medium capitalize">({risk?.replace('_', ' ')})</span></div>
                   </div>
                 )
-              })}
+              })()}
+              {/* RULA score card */}
+              {currentMeasurements.rula && (() => {
+                const level = currentMeasurements.rula.action_level
+                const cls = level >= 4
+                  ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'
+                  : level >= 3
+                  ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'
+                  : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
+                return (
+                  <div className={`p-2.5 rounded-lg border text-center transition-colors duration-300 ${cls}`}>
+                    <div className="text-[10px] font-medium opacity-60 uppercase tracking-wide mb-1">RULA Level</div>
+                    <div className="text-sm font-bold tabular-nums">Level {level}</div>
+                  </div>
+                )
+              })()}
+              {/* Flat measurement cards — skip nested objects */}
+              {Object.entries(currentMeasurements)
+                .filter(([key]) => !['reba', 'rula', 'joint_angles', 'temporal', 'left_shoulder_height_cm', 'right_shoulder_height_cm'].includes(key))
+                .filter(([, value]) => value != null && typeof value !== 'object')
+                .map(([key, value]) => {
+                  const isPostureKey = key === 'posture_angle_deg'
+                  const isSymKey = key === 'symmetry_score'
+                  let cardClass = 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                  if (isPostureKey && Math.abs(value) > 5) cardClass = 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'
+                  if (isSymKey && value < 90) cardClass = 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'
+                  const label = key.replace(/_cm$/, '').replace(/_deg$/, '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+                  const unit = key.endsWith('_cm') ? ' cm' : key.endsWith('_deg') ? '°' : key === 'symmetry_score' ? '%' : ''
+                  return (
+                    <div key={key} className={`p-2.5 rounded-lg border text-center transition-colors duration-300 ${cardClass}`}>
+                      <div className="text-[10px] font-medium opacity-60 uppercase tracking-wide mb-1">{label}</div>
+                      <div className="text-sm font-bold tabular-nums">{value}{unit}</div>
+                    </div>
+                  )
+                })}
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">
@@ -374,6 +444,135 @@ export default function LiveMonitor() {
           )}
         </div>
       </div>
+
+      {/* Hidden webcam capture elements (real mode only) */}
+      {!demoMode && (
+        <>
+          <video ref={videoRef} className="hidden" playsInline muted autoPlay />
+          <canvas ref={canvasRef} className="hidden" />
+        </>
+      )}
+
+      {/* Temporal analysis panel */}
+      {currentMeasurements?.temporal && (() => {
+        const t = currentMeasurements.temporal
+        const fatigue = t.fatigue_index
+        const sway = t.postural_sway_index
+        const symTrend = t.symmetry_trend
+        const samples = t.sample_count ?? 0
+        const trunk = t.trunk_flexion
+        const neck = t.neck_flexion
+        const depthConf = currentMeasurements.depth_confidence
+
+        const fatigueColor = fatigue == null ? 'text-slate-400'
+          : fatigue >= 0.6 ? 'text-red-600 dark:text-red-400'
+          : fatigue >= 0.3 ? 'text-amber-600 dark:text-amber-400'
+          : 'text-emerald-600 dark:text-emerald-400'
+
+        const trendIcon = symTrend === 'improving' ? '↑' : symTrend === 'worsening' ? '↓' : '→'
+        const trendColor = symTrend === 'improving' ? 'text-emerald-600 dark:text-emerald-400'
+          : symTrend === 'worsening' ? 'text-red-600 dark:text-red-400'
+          : 'text-slate-500'
+
+        return (
+          <div className="card p-5 mb-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                <Activity size={14} className="text-slate-400" />
+                Temporal Analysis
+              </h3>
+              <span className="text-[10px] text-slate-400 font-mono">{samples} frames · 30 s window</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {/* Fatigue index */}
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 text-center">
+                <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide mb-1">Fatigue Index</div>
+                <div className={`text-lg font-bold tabular-nums ${fatigueColor}`}>
+                  {fatigue != null ? fatigue.toFixed(2) : '—'}
+                </div>
+                <div className="text-[9px] text-slate-400 mt-0.5">trunk drift 0–1</div>
+              </div>
+
+              {/* Postural sway */}
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 text-center">
+                <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide mb-1">Sway Index</div>
+                <div className="text-lg font-bold tabular-nums text-slate-700 dark:text-slate-200">
+                  {sway != null ? sway.toFixed(4) : '—'}
+                </div>
+                <div className="text-[9px] text-slate-400 mt-0.5">hip RMS displacement (m)</div>
+              </div>
+
+              {/* Symmetry trend */}
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 text-center">
+                <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide mb-1">Sym. Trend</div>
+                <div className={`text-lg font-bold ${trendColor}`}>
+                  {symTrend ? `${trendIcon} ${symTrend}` : '—'}
+                </div>
+                <div className="text-[9px] text-slate-400 mt-0.5">Mann-Kendall</div>
+              </div>
+
+              {/* Trunk flexion stats */}
+              {trunk?.mean != null && (
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 text-center">
+                  <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide mb-1">Trunk Flex μ±σ</div>
+                  <div className="text-base font-bold tabular-nums text-slate-700 dark:text-slate-200">
+                    {trunk.mean}° <span className="text-xs font-normal text-slate-400">±{trunk.std}°</span>
+                  </div>
+                  <div className="text-[9px] text-slate-400 mt-0.5">{trunk.min}° – {trunk.max}°</div>
+                </div>
+              )}
+
+              {/* Neck flexion stats */}
+              {neck?.mean != null && (
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 text-center">
+                  <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide mb-1">Neck Flex μ±σ</div>
+                  <div className="text-base font-bold tabular-nums text-slate-700 dark:text-slate-200">
+                    {neck.mean}° <span className="text-xs font-normal text-slate-400">±{neck.std}°</span>
+                  </div>
+                  <div className="text-[9px] text-slate-400 mt-0.5">{neck.min}° – {neck.max}°</div>
+                </div>
+              )}
+
+              {/* Depth confidence */}
+              {depthConf != null && (
+                <div className={`p-3 rounded-lg border text-center ${
+                  depthConf < 0.4 ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'
+                  : 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700'
+                }`}>
+                  <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide mb-1">Depth Conf.</div>
+                  <div className={`text-base font-bold tabular-nums ${
+                    depthConf < 0.4 ? 'text-amber-700 dark:text-amber-300' : 'text-slate-700 dark:text-slate-200'
+                  }`}>{(depthConf * 100).toFixed(0)}%</div>
+                  <div className="text-[9px] text-slate-400 mt-0.5">rotation check</div>
+                </div>
+              )}
+            </div>
+
+            {/* Bilateral LSI row */}
+            {['lsi_arm', 'lsi_upper_arm', 'lsi_forearm', 'lsi_thigh', 'lsi_shank'].some(k => currentMeasurements[k] != null) && (
+              <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-2">Bilateral Symmetry Index (LSI %)</div>
+                <div className="grid grid-cols-5 gap-2">
+                  {['lsi_arm', 'lsi_upper_arm', 'lsi_forearm', 'lsi_thigh', 'lsi_shank'].map(k => {
+                    const v = currentMeasurements[k]
+                    if (v == null) return null
+                    const high = v > 10
+                    return (
+                      <div key={k} className={`p-2 rounded-lg border text-center ${
+                        high ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'
+                        : 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700'
+                      }`}>
+                        <div className="text-[9px] text-slate-400 mb-0.5">{k.replace('lsi_','').replace('_',' ')}</div>
+                        <div className={`text-sm font-bold ${high ? 'text-amber-700 dark:text-amber-300' : 'text-slate-700 dark:text-slate-200'}`}>{v}%</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Alert log */}
       <div className="card p-5">
@@ -389,7 +588,7 @@ export default function LiveMonitor() {
           )}
         </div>
 
-        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+        <div ref={logContainerRef} className="space-y-2 max-h-64 overflow-y-auto pr-1">
           {alertLog.length === 0 ? (
             <div className="flex items-center justify-center py-8 text-slate-400 text-sm gap-2">
               <Activity size={16} />
@@ -397,12 +596,11 @@ export default function LiveMonitor() {
             </div>
           ) : (
             <AnimatePresence initial={false}>
-              {[...alertLog].reverse().map((entry, i) => (
+              {alertLog.map((entry, i) => (
                 <AlertEntry key={`${entry.time}-${i}`} entry={entry} index={i} />
               ))}
             </AnimatePresence>
           )}
-          <div ref={logEndRef} />
         </div>
       </div>
     </motion.div>

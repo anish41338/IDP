@@ -12,21 +12,21 @@
   }
 
   body {
-    @apply bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100;
+    @apply bg-slate-100 text-slate-900 dark:bg-[#0f1117] dark:text-slate-100;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
   ::-webkit-scrollbar {
-    width: 5px;
-    height: 5px;
+    width: 4px;
+    height: 4px;
   }
   ::-webkit-scrollbar-track {
     @apply bg-transparent;
   }
   ::-webkit-scrollbar-thumb {
-    @apply bg-slate-300 dark:bg-slate-600 rounded-full;
+    @apply bg-slate-300 dark:bg-slate-700 rounded-full;
   }
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-slate-400 dark:bg-slate-500;
@@ -35,46 +35,63 @@
 
 @layer components {
   .card {
-    @apply bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm;
+    @apply bg-white dark:bg-[#1a1f2e] rounded-2xl border border-slate-200/80 dark:border-slate-700/60 shadow-sm;
   }
 
   .card-hover {
-    @apply card transition-shadow duration-200 hover:shadow-md;
+    @apply card transition-all duration-200 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-600 hover:-translate-y-0.5;
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow-blue-500/25 hover:shadow-md active:scale-[0.98];
   }
 
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-sm font-medium rounded-lg transition-colors duration-150 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 dark:focus:ring-offset-slate-900;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-semibold rounded-xl transition-all duration-150 disabled:opacity-50 border border-slate-200 dark:border-slate-700 active:scale-[0.98];
   }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium rounded-lg transition-colors duration-150;
+    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-medium rounded-xl transition-colors duration-150;
   }
 
   .btn-danger {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors duration-150;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-semibold rounded-xl transition-all duration-150 shadow-sm active:scale-[0.98];
   }
 
   .input {
-    @apply w-full px-3 py-2.5 bg-white dark:bg-slate-700/50 border border-slate-300 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 focus:border-transparent transition-colors duration-150;
+    @apply w-full px-3.5 py-2.5 bg-white dark:bg-[#1a1f2e] border border-slate-300 dark:border-slate-600 rounded-xl text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 dark:focus:border-blue-400 transition-all duration-150;
   }
 
   .label {
-    @apply block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5;
+    @apply block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5;
   }
 
   .badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
   }
 
   .tab-active {
-    @apply border-b-2 border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400;
+    @apply border-b-2 border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400 font-semibold;
   }
 
   .tab-inactive {
     @apply border-b-2 border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600;
+  }
+
+  .stat-card {
+    @apply card p-5 flex items-center gap-4 relative overflow-hidden;
+  }
+
+  .glass {
+    @apply bg-white/80 dark:bg-[#1a1f2e]/80 backdrop-blur-md border border-white/30 dark:border-slate-700/50;
+  }
+
+  .skeleton {
+    @apply bg-slate-200 dark:bg-slate-800 rounded-xl animate-pulse;
+  }
+
+  /* Hero gradient stat cards */
+  .hero-card {
+    @apply rounded-2xl p-5 flex items-center gap-4 relative overflow-hidden;
   }
 }

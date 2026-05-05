@@ -12,6 +12,9 @@ async def video_stream(websocket: WebSocket):
     height_cm = 170.0  # default
     loop = asyncio.get_event_loop()
 
+    # Reset all Kalman state + alert cooldowns at the start of every new session
+    pose_service.reset_tracking()
+
     try:
         while True:
             message = await websocket.receive()
@@ -44,3 +47,6 @@ async def video_stream(websocket: WebSocket):
             await websocket.send_json({"error": str(e)})
         except Exception:
             pass
+    finally:
+        # Clean up between sessions so next patient starts fresh
+        pose_service.reset_tracking()

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from database.db import get_db
 from database.models import MeasurementSession, Report, Patient
 from services.llm_service import generate_assessment_report, generate_progress_report, generate_soap_note
-from services.analytics import compare_to_norms, compute_progress_delta
+from services.analytics import compare_to_norms, compute_progress_delta, compute_z_scores, compute_longitudinal_trends
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -16,6 +16,15 @@ class ReportRequest(BaseModel):
 class ProgressReportRequest(BaseModel):
     session_id: int
     previous_session_id: int
+
+
+_NESTED_MEASUREMENT_KEYS = {"reba", "rula", "joint_angles", "temporal"}
+
+
+def _flat_measurements(measurements: dict) -> dict:
+    """Strip nested objects that break numeric analytics."""
+    return {k: v for k, v in (measurements or {}).items()
+            if k not in _NESTED_MEASUREMENT_KEYS and isinstance(v, (int, float))}
 
 
 def _session_to_dict(session: MeasurementSession) -> dict:
@@ -45,10 +54,24 @@ def create_assessment_report(req: ReportRequest, db: DBSession = Depends(get_db)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     patient = session.patient
+    flat_m = _flat_measurements(session.measurements)
     norms = {}
-    if patient.age and patient.gender and session.measurements:
-        norms = compare_to_norms(session.measurements, patient.age, patient.gender)
-    content = generate_assessment_report(_patient_to_dict(patient), _session_to_dict(session), norms)
+    if patient.age and patient.gender and flat_m:
+        norms = compare_to_norms(flat_m, patient.age, patient.gender)
+    z_scores = {}
+    if patient.age and patient.gender and flat_m:
+        z_scores = compute_z_scores(flat_m, patient.age, patient.gender)
+
+    # Eager-load all sibling sessions while DB session is still open
+    all_sessions = db.query(MeasurementSession).filter(
+        MeasurementSession.patient_id == patient.id
+    ).order_by(MeasurementSession.session_date).all()
+    trend_data = compute_longitudinal_trends([_session_to_dict(s) for s in all_sessions])
+
+    content = generate_assessment_report(
+        _patient_to_dict(patient), _session_to_dict(session), norms,
+        z_scores=z_scores, trends=trend_data
+    )
     report = Report(session_id=session.id, report_type="assessment", content=content)
     db.add(report)
     db.commit()

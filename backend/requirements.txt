@@ -3,12 +3,14 @@ uvicorn[standard]
 sqlalchemy
 python-dotenv
 opencv-python
-mediapipe==0.10.14
+mediapipe==0.10.18
+numpy<2
 litellm
 reportlab
 python-multipart
 websockets
 Pillow
-numpy
 pandas
 httpx
+filterpy
+scipy

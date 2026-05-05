@@ -20,36 +20,99 @@ def _call_llm(messages: list) -> str:
     return response.choices[0].message.content
 
 
-def generate_assessment_report(patient: dict, session: dict, norms: dict) -> str:
+def generate_assessment_report(
+    patient: dict, session: dict, norms: dict,
+    z_scores: dict = None, trends: dict = None
+) -> str:
     patient_info = (
         f"Patient: {patient['name']}, Age: {patient.get('age', 'N/A')}, "
         f"Gender: {patient.get('gender', 'N/A')}, "
         f"Height: {patient.get('height_cm', 'N/A')} cm, "
         f"Weight: {patient.get('weight_kg', 'N/A')} kg"
     )
-    measurements_str = str(session.get("measurements", {}))
-    alerts_str = str(session.get("posture_alerts", []))
-    norms_str = str(norms)
+    m = session.get("measurements", {}) or {}
+    reba = m.get("reba", {})
+    rula = m.get("rula", {})
+    temporal = m.get("temporal", {})
+
+    # Build structured clinical context
+    reba_str = (
+        f"REBA: score={reba.get('final_score')}, risk={reba.get('risk_level')}, "
+        f"Table A={reba.get('score_a')}, Table B={reba.get('score_b')}"
+        if reba else "REBA: not computed"
+    )
+    rula_str = (
+        f"RULA: grand score={rula.get('grand_score')}, action level={rula.get('action_level')}, "
+        f"description={rula.get('action_description', '')}"
+        if rula else "RULA: not computed"
+    )
+    temporal_str = ""
+    if temporal:
+        sway = temporal.get("postural_sway_index")
+        fatigue = temporal.get("fatigue_index")
+        sym_trend = temporal.get("symmetry_trend")
+        temporal_str = (
+            f"\nTemporal Analysis (30-second window):\n"
+            f"  Postural sway index: {sway}\n"
+            f"  Fatigue index (trunk drift): {fatigue}\n"
+            f"  Symmetry trend: {sym_trend}\n"
+            f"  Trunk flexion stats: {temporal.get('trunk_flexion')}\n"
+            f"  Neck flexion stats: {temporal.get('neck_flexion')}"
+        )
+
+    lsi_str = ""
+    lsi_keys = [k for k in m if k.startswith("lsi_")]
+    if lsi_keys:
+        lsi_parts = [f"{k.replace('lsi_','').replace('_',' ')}: {m[k]:.1f}%" for k in lsi_keys if m.get(k) is not None]
+        lsi_str = f"\nBilateral LSI: {', '.join(lsi_parts)}"
+
+    zscore_summary = ""
+    if z_scores:
+        significant = {k: v for k, v in z_scores.items() if abs(v.get("z_score", 0)) > 1.5}
+        if significant:
+            parts = [f"{k}: z={v['z_score']}, p={v['percentile']}th pct" for k, v in list(significant.items())[:6]]
+            zscore_summary = f"\nSignificant z-scores (|z|>1.5): {'; '.join(parts)}"
+
+    trend_summary = ""
+    if trends:
+        sig_trends = {k: v for k, v in trends.items() if v.get("significant") and k in (
+            "symmetry_score", "posture_angle_deg", "reba_final_score", "trunk_flexion"
+        )}
+        if sig_trends:
+            parts = [f"{k}: {v['trend']} (p={v['p_value']})" for k, v in sig_trends.items()]
+            trend_summary = f"\nStatistically significant longitudinal trends: {'; '.join(parts)}"
 
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a clinical assessment AI assistant for physical therapy and orthopedic care. "
-                "Generate professional clinical assessment reports based on body measurement data. "
-                "Be concise, objective, and clinically relevant."
+                "You are a clinical assessment AI for physical therapy and occupational health. "
+                "Generate a structured, evidence-based clinical report using REBA/RULA ergonomic scores, "
+                "anthropometric z-scores, bilateral symmetry indices, temporal postural analysis, and "
+                "longitudinal trend data. Be concise, objective, and clinically precise."
             ),
         },
         {
             "role": "user",
             "content": (
-                f"Generate a clinical body assessment report for the following patient:\n\n"
-                f"{patient_info}\n\n"
-                f"Measurements: {measurements_str}\n\n"
-                f"Posture Alerts: {alerts_str}\n\n"
-                f"Comparison to norms: {norms_str}\n\n"
-                "Include: summary of findings, postural analysis, areas of concern, "
-                "and recommendations for further evaluation."
+                f"Generate a clinical body assessment report:\n\n"
+                f"## Patient\n{patient_info}\n\n"
+                f"## Ergonomic Risk Scores\n{reba_str}\n{rula_str}\n\n"
+                f"## Key Measurements\n"
+                f"  Symmetry score: {m.get('symmetry_score')}%, "
+                f"Ape index: {m.get('ape_index')}, "
+                f"Cormic index: {m.get('cormic_index')}, "
+                f"Shoulder-hip ratio: {m.get('shoulder_hip_ratio')}, "
+                f"Depth confidence: {m.get('depth_confidence')}"
+                f"{lsi_str}"
+                f"{temporal_str}"
+                f"{zscore_summary}"
+                f"{trend_summary}\n\n"
+                f"## Posture Alerts\n{session.get('posture_alerts', [])}\n\n"
+                f"## Norm Comparison\n{norms}\n\n"
+                "Structure your report as: 1) Executive Summary, 2) Postural Analysis, "
+                "3) Ergonomic Risk Assessment, 4) Anthropometric Profile, "
+                "5) Temporal Findings (if available), 6) Clinical Recommendations."
             ),
         },
     ]
@@ -82,12 +145,23 @@ def generate_progress_report(patient: dict, current: dict, previous: dict, delta
 
 
 def generate_soap_note(patient: dict, session: dict) -> str:
+    m = session.get("measurements", {}) or {}
+    reba = m.get("reba", {})
+    temporal = m.get("temporal", {})
+    temporal_note = ""
+    if temporal:
+        fatigue = temporal.get("fatigue_index")
+        sway = temporal.get("postural_sway_index")
+        if fatigue is not None or sway is not None:
+            temporal_note = f"\nTemporal: fatigue_index={fatigue}, sway_index={sway}"
+
     messages = [
         {
             "role": "system",
             "content": (
                 "You are a clinical documentation AI. Generate SOAP notes based on "
-                "body measurement data. Format strictly as: Subjective, Objective, Assessment, Plan."
+                "body measurement data including REBA/RULA ergonomic scores and temporal postural analysis. "
+                "Format strictly as: Subjective, Objective, Assessment, Plan."
             ),
         },
         {
@@ -95,7 +169,10 @@ def generate_soap_note(patient: dict, session: dict) -> str:
             "content": (
                 f"Generate a SOAP note for:\n"
                 f"Patient: {patient['name']}, Age: {patient.get('age')}, Gender: {patient.get('gender')}\n"
-                f"Measurements: {session.get('measurements', {})}\n"
+                f"REBA score: {reba.get('final_score')} ({reba.get('risk_level')})\n"
+                f"Symmetry: {m.get('symmetry_score')}%, Posture angle: {m.get('posture_angle_deg')}°\n"
+                f"LSI arm: {m.get('lsi_arm')}%, LSI thigh: {m.get('lsi_thigh')}%"
+                f"{temporal_note}\n"
                 f"Posture Alerts: {session.get('posture_alerts', [])}\n"
                 f"Session notes: {session.get('notes', 'None')}"
             ),
