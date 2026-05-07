@@ -1,6 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-export default function useVideoStream(heightCm) {
+// Generate a session id once per hook instance. Survives StrictMode
+// double-mount, useEffect cleanup churn, and WS reconnects so the
+// backend can distinguish "same session, reconnecting" from "new session,
+// reset calibration". Falls back to a random string if crypto.randomUUID
+// is unavailable (older browsers / non-secure contexts).
+function makeSessionId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `s_${Date.now()}_${Math.random().toString(36).slice(2)}`
+}
+
+export default function useVideoStream(heightCm, patientId) {
   const [frameDataUrl, setFrameDataUrl] = useState(null)
   const [measurements, setMeasurements] = useState(null)
   const [alerts, setAlerts] = useState([])
@@ -14,14 +26,25 @@ export default function useVideoStream(heightCm) {
   const retryCountRef = useRef(0)
   const retryTimeoutRef = useRef(null)
   const heightCmRef = useRef(heightCm || 170)
+  const patientIdRef = useRef(patientId ?? null)
+  const sessionIdRef = useRef(null)
+  if (sessionIdRef.current === null) {
+    sessionIdRef.current = makeSessionId()
+  }
   const streamRef = useRef(null)   // keep stream reference so we can attach it after video mounts
 
   useEffect(() => {
     heightCmRef.current = heightCm || 170
+    patientIdRef.current = patientId ?? null
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'config', height_cm: heightCmRef.current }))
+      wsRef.current.send(JSON.stringify({
+        type: 'config',
+        session_id: sessionIdRef.current,
+        height_cm: heightCmRef.current,
+        patient_id: patientIdRef.current,
+      }))
     }
-  }, [heightCm])
+  }, [heightCm, patientId])
 
   const stopCapture = useCallback(() => {
     if (intervalRef.current) {
@@ -75,7 +98,12 @@ export default function useVideoStream(heightCm) {
       setConnected(true)
       setError(null)
       retryCountRef.current = 0
-      ws.send(JSON.stringify({ type: 'config', height_cm: heightCmRef.current || 170 }))
+      ws.send(JSON.stringify({
+        type: 'config',
+        session_id: sessionIdRef.current,
+        height_cm: heightCmRef.current || 170,
+        patient_id: patientIdRef.current,
+      }))
       startCapture()
     }
 

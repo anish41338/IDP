@@ -11,7 +11,7 @@ const item = {
 
 // Keys to skip from the flat measurement grid (rendered separately)
 const SKIP_KEYS = new Set([
-  'joint_angles', 'reba', 'rula', 'temporal',
+  'joint_angles', 'reba', 'rula', 'temporal', 'anomaly',
   'left_shoulder_height_cm', 'right_shoulder_height_cm',
 ])
 

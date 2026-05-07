@@ -8,6 +8,7 @@ import { mockApi } from '../lib/mockData'
 import { useAppContext } from '../context/AppContext'
 import useVideoStream from '../hooks/useVideoStream'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
+import AnomalyGauge from '../components/measurement/AnomalyGauge'
 
 // ─── Demo skeleton feed ───────────────────────────────────────────────────────
 
@@ -174,9 +175,13 @@ export default function LiveMonitor() {
   // Accumulate all alerts seen during this session for saving
   const allAlertsRef = useRef([])
 
-  // Real-mode WebSocket — patient.height_cm used for scale calibration
+  // Real-mode WebSocket — patient.height_cm used for scale calibration,
+  // patientId persists/loads the per-user anomaly baseline.
   const { frameDataUrl, measurements, alerts, connected, videoRef, canvasRef } =
-    useVideoStream(!demoMode ? (patient?.height_cm ?? 170) : null)
+    useVideoStream(
+      !demoMode ? (patient?.height_cm ?? 170) : null,
+      !demoMode ? patientId : null,
+    )
 
   // Load patient
   useEffect(() => {
@@ -266,10 +271,13 @@ export default function LiveMonitor() {
     setSaving(true)
     setSaveError(null)
     try {
-      const session = await (demoMode
-        ? mockApi.createSession({ patient_id: Number(patientId), measurements: m, posture_alerts: allAlertsRef.current })
-        : createSession({ patient_id: Number(patientId), measurements: m, posture_alerts: allAlertsRef.current })
-      )
+      const payload = {
+        patient_id: Number(patientId),
+        measurements: m,
+        posture_alerts: allAlertsRef.current,
+        anomaly_summary: m.anomaly ? { latest: m.anomaly } : null,
+      }
+      const session = await (demoMode ? mockApi.createSession(payload) : createSession(payload))
       navigate(`/sessions/${session.id}`)
     } catch {
       setSaveError('Failed to save session')
@@ -416,7 +424,7 @@ export default function LiveMonitor() {
               })()}
               {/* Flat measurement cards — skip nested objects */}
               {Object.entries(currentMeasurements)
-                .filter(([key]) => !['reba', 'rula', 'joint_angles', 'temporal', 'left_shoulder_height_cm', 'right_shoulder_height_cm'].includes(key))
+                .filter(([key]) => !['reba', 'rula', 'joint_angles', 'temporal', 'anomaly', 'left_shoulder_height_cm', 'right_shoulder_height_cm'].includes(key))
                 .filter(([, value]) => value != null && typeof value !== 'object')
                 .map(([key, value]) => {
                   const isPostureKey = key === 'posture_angle_deg'
@@ -451,6 +459,11 @@ export default function LiveMonitor() {
           <video ref={videoRef} className="hidden" playsInline muted autoPlay />
           <canvas ref={canvasRef} className="hidden" />
         </>
+      )}
+
+      {/* Postural anomaly gauge (per-user baseline) */}
+      {currentMeasurements?.anomaly && (
+        <AnomalyGauge anomaly={currentMeasurements.anomaly} />
       )}
 
       {/* Temporal analysis panel */}

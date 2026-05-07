@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import base64
+import os
 import time
 from collections import deque
 from typing import Dict, List, Optional, Tuple
@@ -14,6 +15,17 @@ from services.measurements import compute_all_measurements
 from services.joint_angles import compute_joint_angles
 from services.reba import compute_reba
 from services.rula import compute_rula
+
+# Anomaly detector is optional: if scikit-learn is unavailable we fall back
+# silently rather than break the existing pipeline.
+try:
+    from services.anomaly_detector import PosturalAnomalyDetector
+    from config import BASELINE_DIR
+    _ANOMALY_AVAILABLE = True
+except Exception:  # pragma: no cover — defensive
+    PosturalAnomalyDetector = None  # type: ignore
+    BASELINE_DIR = ""
+    _ANOMALY_AVAILABLE = False
 
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
@@ -79,6 +91,22 @@ class PoseService:
 
         # Alert cooldown: maps alert key → last_fired timestamp
         self._alert_last: Dict[str, float] = {}
+
+        # Postural anomaly detector — independent of REBA/RULA, scores
+        # against the user's own baseline rather than population norms.
+        self._anomaly: Optional["PosturalAnomalyDetector"] = (
+            PosturalAnomalyDetector() if _ANOMALY_AVAILABLE else None
+        )
+        self._patient_id: Optional[str] = None
+        self._baseline_saved: bool = False
+        # Aggregated severity counters for the active session
+        self._anomaly_severity_counts: Dict[str, int] = {
+            "NORMAL": 0, "MILD": 0, "MODERATE": 0, "SEVERE": 0,
+        }
+        # Session id supplied by the client. Used to decide whether a new
+        # WS connection represents a fresh session (reset state) or a
+        # reconnect of the same session (preserve calibration buffer).
+        self._session_id: Optional[str] = None
 
     def process_frame(
         self, frame_bytes: bytes, real_height_cm: float
@@ -148,6 +176,31 @@ class PoseService:
                 measurements["reba"] = reba
                 measurements["rula"] = rula
                 measurements["temporal"] = temporal
+
+                # Postural anomaly score (per-user baseline) — never allowed
+                # to break the frame pipeline.
+                if self._anomaly is not None:
+                    try:
+                        anomaly_result = self._anomaly.update(angles)
+                        measurements["anomaly"] = anomaly_result.model_dump()
+                        self._anomaly_severity_counts[anomaly_result.severity] = (
+                            self._anomaly_severity_counts.get(anomaly_result.severity, 0) + 1
+                        )
+                        if (
+                            self._patient_id
+                            and self._anomaly.is_ready
+                            and not self._baseline_saved
+                        ):
+                            try:
+                                path = os.path.join(
+                                    BASELINE_DIR, f"patient_{self._patient_id}.pkl"
+                                )
+                                self._anomaly.save_baseline(path)
+                                self._baseline_saved = True
+                            except Exception:  # pragma: no cover
+                                pass
+                    except Exception:  # pragma: no cover — never poison frame
+                        measurements["anomaly"] = None
 
                 alerts = self._generate_alerts(measurements, reba, temporal)
             except Exception as exc:
@@ -335,6 +388,16 @@ class PoseService:
         if conf is not None and conf < 0.4:
             _try_alert("depth_conf", f"Low confidence ({conf:.2f}) — face camera directly")
 
+        # Postural anomaly alert — only fire on SEVERE; MILD/MODERATE are
+        # surfaced visually via the anomaly gauge instead of as alerts.
+        anomaly = measurements.get("anomaly") or {}
+        if anomaly.get("severity") == "SEVERE":
+            top = ", ".join(anomaly.get("top_features", []) or []) or "posture pattern"
+            _try_alert(
+                "anomaly_severe",
+                f"Unusual posture detected ({top}) — deviates from your baseline",
+            )
+
         return alerts
 
     def reset_tracking(self) -> None:
@@ -347,6 +410,67 @@ class PoseService:
         self._sym_buf.clear()
         self._reba_buf.clear()
         self._alert_last.clear()
+        if self._anomaly is not None:
+            self._anomaly.reset()
+        self._patient_id = None
+        self._baseline_saved = False
+        self._anomaly_severity_counts = {
+            "NORMAL": 0, "MILD": 0, "MODERATE": 0, "SEVERE": 0,
+        }
+
+    def maybe_reset_for_session(self, session_id: Optional[str]) -> bool:
+        """Reset tracking only if ``session_id`` differs from the active one.
+
+        Returning the singleton state to a clean slate on every WebSocket
+        ``accept`` would wipe in-progress anomaly calibration whenever the
+        socket drops or React.StrictMode double-mounts the hook in dev.
+        Tying the reset to a client-supplied session id makes reconnects
+        idempotent while still cleaning up between genuinely new sessions.
+
+        Args:
+            session_id: Client session UUID, or ``None`` to skip the reset.
+
+        Returns:
+            ``True`` if state was reset, ``False`` if reused.
+        """
+        if not session_id:
+            return False
+        if session_id == self._session_id:
+            return False
+        self.reset_tracking()
+        self._session_id = session_id
+        return True
+
+    def set_patient(self, patient_id: Optional[object]) -> None:
+        """Associate the active session with a patient and try to load their saved baseline.
+
+        Called from the websocket layer when the client sends its config message.
+        Safe to call multiple times — only takes effect if the anomaly detector is available.
+        """
+        new_id = str(patient_id) if patient_id is not None else None
+        if new_id == self._patient_id:
+            return
+        self._patient_id = new_id
+        if self._anomaly is None:
+            return
+        self._anomaly.set_patient(self._patient_id, BASELINE_DIR)
+        # If a saved baseline was loaded, mark as already saved so we don't re-pickle it.
+        self._baseline_saved = self._anomaly.is_ready
+
+    def get_anomaly_summary(self) -> Optional[Dict]:
+        """Return an aggregated summary of the active session's anomaly state.
+
+        Suitable for persisting on ``MeasurementSession.anomaly_summary`` at
+        session-save time. Returns ``None`` if the detector is unavailable.
+        """
+        if self._anomaly is None:
+            return None
+        return {
+            "severity_counts": dict(self._anomaly_severity_counts),
+            "baseline": self._anomaly.baseline_summary(),
+            "calibrated": self._anomaly.is_ready,
+            "patient_id": self._patient_id,
+        }
 
 
 # Module-level singleton — never instantiate per-request

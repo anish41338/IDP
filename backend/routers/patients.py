@@ -97,6 +97,7 @@ def get_patient_sessions(patient_id: int, db: DBSession = Depends(get_db)):
             "patient_id": s.patient_id,
             "measurements": s.measurements,
             "posture_alerts": s.posture_alerts,
+            "anomaly_summary": s.anomaly_summary,
             "notes": s.notes,
             "session_date": str(s.session_date),
         }

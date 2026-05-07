@@ -28,6 +28,7 @@ class MeasurementSession(Base):
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
     measurements = Column(JSON)
     posture_alerts = Column(JSON)
+    anomaly_summary = Column(JSON)
     notes = Column(Text)
     session_date = Column(DateTime(timezone=True), server_default=func.now())
 

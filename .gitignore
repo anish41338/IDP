@@ -35,3 +35,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Per-patient anomaly baselines (regenerated from session data)
+backend/baselines/*.pkl
